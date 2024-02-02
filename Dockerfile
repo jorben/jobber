@@ -1,40 +1,28 @@
-FROM golang:1.9-alpine
-MAINTAINER C. Dylan Shearer <dylan@nekonya.info>
+FROM alpine:3.11
 
-ENV JOBBER_VER v1.4.4
-ENV SRC_HASH 8d8cdeb941710e168f8f63abbfc06aab2aadfdfc22b3f6de7108f56403860476
-
-RUN apk update && \
-    apk upgrade && \
-    apk add --update make rsync grep ca-certificates openssl wget
-
-WORKDIR /go_wkspc/src/github.com/dshearer
-RUN wget "https://api.github.com/repos/dshearer/jobber/tarball/${JOBBER_VER}" -O jobber.tar.gz && \
-    echo "${SRC_HASH}  jobber.tar.gz" | sha256sum -cw && \
-    tar xzf *.tar.gz && rm *.tar.gz && mv dshearer-* jobber && \
-    cd jobber && \
-    make check && \
-    make install DESTDIR=/jobber-dist/
-
-FROM alpine:latest
-
-# 添加curl 便于执行远程任务
-RUN apk add --update curl
-
-RUN mkdir /jobber
-COPY --from=0 /jobber-dist/usr/local/libexec/jobberrunner /jobber/jobberrunner
-COPY --from=0 /jobber-dist/usr/local/bin/jobber /jobber/jobber
-ENV PATH /jobber:${PATH}
-
-ENV USERID 100
+# make user
+ENV USERID 1000
 RUN addgroup jobberuser && \
     adduser -S -u "${USERID}" -G jobberuser jobberuser && \
     mkdir -p "/var/jobber/${USERID}" && \
     chown -R jobberuser:jobberuser "/var/jobber/${USERID}"
 
-COPY jobconfig /home/jobberuser/.jobber
-RUN chown jobberuser:jobberuser /home/jobberuser/.jobber && \
-    chmod 0600 /home/jobberuser/.jobber
+# install jobber
+ENV JOBBER_VERSION 1.4.4
+ENV JOBBER_SHA256 ec09b2efafff69c91fba2124bf28607209e1c9b50ed834ff444a9d40798aa8d3
+RUN wget -O /tmp/jobber.apk "https://github.com/dshearer/jobber/releases/download/v${JOBBER_VERSION}/jobber-${JOBBER_VERSION}-r0.apk" && \
+    echo -n "Actual checksum: " && sha256sum /tmp/jobber.apk && \
+    echo "${JOBBER_SHA256} */tmp/jobber.apk" | sha256sum -c && \
+# --no-scripts is needed b/c the post-install scripts don't work in Docker
+    apk add --no-network --no-scripts --allow-untrusted /tmp/jobber.apk && \
+    rm /tmp/jobber.apk
+
+# add jobconfig
+COPY --chown=jobberuser:jobberuser jobconfig /home/jobberuser/.jobber
+RUN chmod 0600 /home/jobberuser/.jobber
+
+# add curl
+RUN apk add curl
+
 USER jobberuser
-ENTRYPOINT ["jobberrunner"]
-CMD ["/home/jobberuser/.jobber"]
+CMD ["/usr/libexec/jobberrunner", "-u", "/var/jobber/1000/cmd.sock", "/home/jobberuser/.jobber"]
